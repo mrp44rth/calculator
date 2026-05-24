@@ -1,0 +1,6 @@
+{
+  "name": "Lightweight Calculator",
+  "description": "A beautiful, lightweight calculator app styled with Material Design 3 and complete history persistence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
