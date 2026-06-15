@@ -5,11 +5,14 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.data.entity.CalculationHistory
+import com.example.data.entity.VaultFile
 import com.example.data.dao.HistoryDao
+import com.example.data.dao.VaultFileDao
 
-@Database(entities = [CalculationHistory::class], version = 1, exportSchema = false)
+@Database(entities = [CalculationHistory::class, VaultFile::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun historyDao(): HistoryDao
+    abstract fun vaultFileDao(): VaultFileDao
 
     companion object {
         @Volatile
@@ -21,7 +24,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "calculator_database"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }

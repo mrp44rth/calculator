@@ -1,9 +1,11 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.*
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -31,9 +33,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.example.data.entity.CalculationHistory
+import com.example.data.entity.VaultFile
 import com.example.viewmodel.CalculatorAction
 import com.example.viewmodel.CalculatorViewModel
+import java.io.File
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
@@ -43,12 +48,11 @@ fun CalculatorScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val historyList by viewModel.historyList.collectAsStateWithLifecycle()
+    val vaultFiles by viewModel.vaultFiles.collectAsStateWithLifecycle()
     var showHistory by remember { mutableStateOf(false) }
 
-    // Use our state-defined theme status
     val isDark = uiState.isDarkTheme
 
-    // Define beautiful, customized palettes
     val bgColors = if (isDark) {
         DarkCalculatorColors()
     } else {
@@ -70,10 +74,11 @@ fun CalculatorScreen(
                 isDarkTheme = isDark,
                 onToggleTheme = { viewModel.onEvent(CalculatorAction.ToggleTheme) },
                 onToggleHistory = { showHistory = !showHistory },
+                onHeaderLongClick = { viewModel.onEvent(CalculatorAction.OpenVaultRequest) },
                 colors = bgColors
             )
 
-            // 2. Display Viewport (Expands to occupy upper portion)
+            // 2. Display Viewport
             CalculatorDisplay(
                 expression = uiState.expression,
                 previewResult = uiState.previewResult,
@@ -117,15 +122,31 @@ fun CalculatorScreen(
                 colors = bgColors
             )
         }
+
+        // 5. Secret Secured Vault Cover Overlay
+        AnimatedVisibility(
+            visible = uiState.isVaultOpen,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it })
+        ) {
+            VaultOverlay(
+                uiState = uiState,
+                vaultFiles = vaultFiles,
+                onAction = { viewModel.onEvent(it) },
+                colors = bgColors
+            )
+        }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CalculatorHeader(
     appName: String,
     isDarkTheme: Boolean,
     onToggleTheme: () -> Unit,
     onToggleHistory: () -> Unit,
+    onHeaderLongClick: () -> Unit,
     colors: CalculatorColors
 ) {
     Row(
@@ -140,7 +161,12 @@ fun CalculatorHeader(
             color = colors.textPrimary,
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.testTag("app_title")
+            modifier = Modifier
+                .testTag("app_title")
+                .combinedClickable(
+                    onLongClick = onHeaderLongClick,
+                    onClick = { /* normal press does nothing */ }
+                )
         )
 
         Row(
@@ -705,4 +731,696 @@ class LightCalculatorColors : CalculatorColors {
     
     override val buttonAccessoryBg = Color(0xFFE4E9F2)
     override val buttonAccessoryText = Color(0xFF0F5CC0)
+}
+
+// ==========================================
+// SECRET SECURE VAULT COMPONENT SCREENS
+// ==========================================
+
+@Composable
+fun VaultOverlay(
+    uiState: com.example.viewmodel.CalculatorUiState,
+    vaultFiles: List<VaultFile>,
+    onAction: (CalculatorAction) -> Unit,
+    colors: CalculatorColors
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0F121C)) // Carbon charcoal steel theme for private vault feel
+    ) {
+        when (uiState.vaultSetupStep) {
+            1, 2, 3 -> {
+                VaultPasscodeScreen(
+                    step = uiState.vaultSetupStep,
+                    inputPin = uiState.vaultInputPin,
+                    errorMessage = uiState.pinErrorMessage,
+                    onDigitClick = { onAction(CalculatorAction.VaultPasscodeDigit(it)) },
+                    onBackspaceClick = { onAction(CalculatorAction.VaultPasscodeBackspace) },
+                    onCloseVault = { onAction(CalculatorAction.CloseVault) }
+                )
+            }
+            4 -> {
+                VaultDashboardScreen(
+                    vaultFiles = vaultFiles,
+                    onAction = onAction,
+                    onCloseVault = { onAction(CalculatorAction.CloseVault) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun VaultPasscodeScreen(
+    step: Int,
+    inputPin: String,
+    errorMessage: String?,
+    onDigitClick: (String) -> Unit,
+    onBackspaceClick: () -> Unit,
+    onCloseVault: () -> Unit
+) {
+    val titleText = when (step) {
+        1 -> "Create Vault PIN"
+        2 -> "Confirm Vault PIN"
+        else -> "Vault Encrypted"
+    }
+    
+    val subtitleText = when (step) {
+        1 -> "First-use setup: Choose a secure 4-digit PIN"
+        2 -> "Enter your 4-digit password key once more"
+        else -> "Input your 4-digit security PIN to unlock"
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        // High Top Back Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp),
+            horizontalArrangement = Arrangement.Start
+        ) {
+            IconButton(onClick = onCloseVault) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "Exit Vault Setup",
+                    tint = Color.White
+                )
+            }
+        }
+
+        // Header Section
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = if (step == 3) Icons.Rounded.Lock else Icons.Rounded.EnhancedEncryption,
+                contentDescription = null,
+                tint = Color(0xFFFF9F0A),
+                modifier = Modifier.size(68.dp)
+            )
+            
+            Spacer(modifier = Modifier.height(20.dp))
+            
+            Text(
+                text = titleText,
+                color = Color.White,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                text = subtitleText,
+                color = Color.LightGray,
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 24.dp)
+            )
+            
+            Spacer(modifier = Modifier.height(36.dp))
+            
+            // Password PIN Indicator Dots (max 4)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                for (i in 0 until 4) {
+                    val filled = i < inputPin.length
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .background(
+                                color = if (filled) Color(0xFFFF9F0A) else Color.Transparent,
+                                shape = CircleShape
+                            )
+                            .border(2.dp, Color(0xFFFF9F0A), CircleShape)
+                    )
+                }
+            }
+            
+            if (errorMessage != null) {
+                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    text = errorMessage,
+                    color = Color(0xFFEF5350),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                )
+            }
+        }
+
+        // Elegant Touch Numeric Keypad
+        Column(
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(bottom = 40.dp)
+        ) {
+            val rows = listOf(
+                listOf("1", "2", "3"),
+                listOf("4", "5", "6"),
+                listOf("7", "8", "9")
+            )
+            
+            for (row in rows) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    modifier = Modifier.fillMaxWidth(0.85f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    for (digit in row) {
+                        PinKeypadButton(
+                            text = digit,
+                            onClick = { onDigitClick(digit) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+            
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                modifier = Modifier.fillMaxWidth(0.85f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Spacer(modifier = Modifier.weight(1f))
+                
+                PinKeypadButton(
+                    text = "0",
+                    onClick = { onDigitClick("0") },
+                    modifier = Modifier.weight(1f)
+                )
+                
+                IconButton(
+                    onClick = onBackspaceClick,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(60.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Backspace,
+                        contentDescription = "Delete character",
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PinKeypadButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .height(60.dp)
+            .background(Color(0xFF242B40), shape = CircleShape)
+            .clickable(onClick = onClick)
+    ) {
+        Text(
+            text = text,
+            color = Color.White,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VaultDashboardScreen(
+    vaultFiles: List<VaultFile>,
+    onAction: (CalculatorAction) -> Unit,
+    onCloseVault: () -> Unit
+) {
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Images, 1 = Videos
+    var activePreviewFile by remember { mutableStateOf<VaultFile?>(null) }
+    
+    val photos = vaultFiles.filter { !it.isVideo }
+    val videos = vaultFiles.filter { it.isVideo }
+    
+    val photoLauncher = rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        onAction(CalculatorAction.SetPickerActive(false))
+        if (uri != null) {
+            onAction(CalculatorAction.SecureMediaPicked(uri, false))
+        }
+    }
+    
+    val videoLauncher = rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        onAction(CalculatorAction.SetPickerActive(false))
+        if (uri != null) {
+            onAction(CalculatorAction.SecureMediaPicked(uri, true))
+        }
+    }
+
+    Scaffold(
+        containerColor = Color(0xFF0F121C),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.Security,
+                            contentDescription = null,
+                            tint = Color(0xFF81C784),
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
+                        Text(
+                            text = "Secret Vault",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onCloseVault) {
+                        Icon(
+                            imageVector = Icons.Rounded.ArrowBack,
+                            contentDescription = "Exit Vault",
+                            tint = Color.White
+                        )
+                    }
+                },
+                actions = {
+                    Text(
+                        text = "${vaultFiles.size} Secured",
+                        color = Color(0xFF81C784),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(end = 16.dp)
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF161A26))
+            )
+        },
+        floatingActionButton = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                ExtendedFloatingActionButton(
+                    text = { Text("Hide Photo", color = Color.White) },
+                    icon = { Icon(Icons.Rounded.AddAPhoto, contentDescription = null, tint = Color.White) },
+                    onClick = {
+                        onAction(CalculatorAction.SetPickerActive(true))
+                        photoLauncher.launch("image/*")
+                    },
+                    containerColor = Color(0xFFFF9F0A),
+                    modifier = Modifier.testTag("hide_photo_fab")
+                )
+                ExtendedFloatingActionButton(
+                    text = { Text("Hide Video", color = Color.White) },
+                    icon = { Icon(Icons.Rounded.VideoCall, contentDescription = null, tint = Color.White) },
+                    onClick = {
+                        onAction(CalculatorAction.SetPickerActive(true))
+                        videoLauncher.launch("video/*")
+                    },
+                    containerColor = Color(0xFF2196F3),
+                    modifier = Modifier.testTag("hide_video_fab")
+                )
+            }
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // Tab Header Selection Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF161A26))
+            ) {
+                TabButton(
+                    text = "Photos (${photos.size})",
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    modifier = Modifier.weight(1f)
+                )
+                TabButton(
+                    text = "Videos (${videos.size})",
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            val currentItems = if (selectedTab == 0) photos else videos
+
+            if (currentItems.isEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = if (selectedTab == 0) Icons.Rounded.PhotoLibrary else Icons.Rounded.VideoLibrary,
+                        contentDescription = null,
+                        tint = Color.DarkGray,
+                        modifier = Modifier.size(80.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = if (selectedTab == 0) "No Hidden Photos" else "No Hidden Videos",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Import private files from device storage. They will be copied into `.hiddenfold` encrypted folders and can be completely deleted from publicly indexed media paths.",
+                        color = Color.Gray,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+            } else {
+                androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                    columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(3),
+                    contentPadding = PaddingValues(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(currentItems.size) { index ->
+                        val file = currentItems[index]
+                        MediaGridCard(
+                            file = file,
+                            onClick = { activePreviewFile = file },
+                            onRestore = { onAction(CalculatorAction.UnhideVaultFile(file)) },
+                            onDelete = { onAction(CalculatorAction.DeleteVaultFile(file)) }
+                        )
+                    }
+                }
+            }
+        }
+        
+        activePreviewFile?.let { file ->
+            FullscreenPreviewOverlay(
+                file = file,
+                onClose = { activePreviewFile = null },
+                onRestore = {
+                    onAction(CalculatorAction.UnhideVaultFile(file))
+                    activePreviewFile = null
+                },
+                onDelete = {
+                    onAction(CalculatorAction.DeleteVaultFile(file))
+                    activePreviewFile = null
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun TabButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val barColor = if (selected) Color(0xFFFF9F0A) else Color.Transparent
+    val textColor = if (selected) Color.White else Color.Gray
+
+    Column(
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = text,
+            color = textColor,
+            fontSize = 15.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.5f)
+                .height(3.dp)
+                .background(barColor, shape = RoundedCornerShape(1.5.dp))
+        )
+    }
+}
+
+@Composable
+fun MediaGridCard(
+    file: VaultFile,
+    onClick: () -> Unit,
+    onRestore: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var showDropdownMenu by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF161A26))
+            .clickable(onClick = onClick)
+    ) {
+        if (file.isVideo) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayCircleFilled,
+                    contentDescription = "Video file player link",
+                    tint = Color(0xFF2196F3),
+                    modifier = Modifier.size(36.dp)
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xAA000000))
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = file.originalName ?: file.fileName,
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        } else {
+            AsyncImage(
+                model = File(file.filePath),
+                contentDescription = "Private Image Frame",
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(2.dp)
+        ) {
+            IconButton(
+                onClick = { showDropdownMenu = true },
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.MoreVert,
+                    contentDescription = "Private File Actions",
+                    tint = Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            DropdownMenu(
+                expanded = showDropdownMenu,
+                onDismissRequest = { showDropdownMenu = false },
+                modifier = Modifier.background(Color(0xFF1E2235))
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Restore (Unhide)", color = Color.White) },
+                    onClick = {
+                        onRestore()
+                        showDropdownMenu = false
+                    },
+                    leadingIcon = { Icon(Icons.Rounded.Unarchive, contentDescription = null, tint = Color(0xFF81C784)) }
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete Permanently", color = Color(0xFFEF5350)) },
+                    onClick = {
+                        onDelete()
+                        showDropdownMenu = false
+                    },
+                    leadingIcon = { Icon(Icons.Rounded.DeleteForever, contentDescription = null, tint = Color(0xFFEF5350)) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun FullscreenPreviewOverlay(
+    file: VaultFile,
+    onClose: () -> Unit,
+    onRestore: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFA090A10))
+            .clickable(onClick = onClose)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onClose) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Close View",
+                        tint = Color.White
+                    )
+                }
+                
+                Text(
+                    text = file.originalName ?: file.fileName,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+                    textAlign = TextAlign.Center
+                )
+                
+                Spacer(modifier = Modifier.width(48.dp))
+            }
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                if (file.isVideo) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.PlayCircle,
+                            contentDescription = "Play Video link",
+                            tint = Color(0xFFE0E0E0),
+                            modifier = Modifier.size(96.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Secure Video Format",
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 18.sp
+                        )
+                        Text(
+                            text = "Size: ${formatFileSize(file.size)}",
+                            color = Color.Gray,
+                            fontSize = 14.sp
+                        )
+                    }
+                } else {
+                    AsyncImage(
+                        model = File(file.filePath),
+                        contentDescription = "Hidden Vault Photo content",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onRestore,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Unarchive,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Unhide (Restore)", color = Color.White)
+                }
+
+                Button(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteForever,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Delete Forever", color = Color.White)
+                }
+            }
+        }
+    }
+}
+
+private fun formatFileSize(size: Long): String {
+    if (size <= 0) return "0 B"
+    val units = listOf("B", "KB", "MB", "GB")
+    var currentSize = size.toDouble()
+    var unitIndex = 0
+    while (currentSize >= 1024 && unitIndex < units.size - 1) {
+        currentSize /= 1024
+        unitIndex++
+    }
+    return String.format("%.2f %s", currentSize, units[unitIndex])
 }

@@ -32,10 +32,11 @@ class GreetingScreenshotTest {
 
   @Before
   fun setUp() {
-    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    val context = ApplicationProvider.getApplicationContext<android.app.Application>()
     database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
     val repository = HistoryRepository(database.historyDao())
-    viewModel = CalculatorViewModel(repository)
+    val vaultRepository = com.example.data.repository.VaultRepository(database.vaultFileDao())
+    viewModel = CalculatorViewModel(context, repository, vaultRepository)
   }
 
   @After
